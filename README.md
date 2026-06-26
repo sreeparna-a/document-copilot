@@ -1,171 +1,184 @@
 # Document Copilot
 
-An internal AI chatbot that lets analysts query a corpus of documents in plain English and get sourced, citable answers.
+Document Copilot is a grounded research assistant for analysts built around SEC filing retrieval, grounding, and generative answer streaming. The repo is organized as a React + TypeScript frontend, a Python + FastAPI backend, and Supabase-backed persistence for authentication, documents, embeddings, and chat history.
 
-## The client
+## Why this project exists
 
-**Driftwood Capital** — fictional independent investment research firm. Their analysts spend half their week reading 10-Ks and 10-Qs before they can produce any original analysis. Document Copilot eats that intake work so they can skip straight to insight.
+The product is designed to reduce analyst intake work by turning curated SEC filings into a searchable, trusted conversational interface.
 
-Full brief: [docs/client-brief.md](docs/client-brief.md)
+- Users ask questions in plain English about filings.
+- The system retrieves evidence from a curated corpus of documents.
+- Answers are generated only from retrieved source passages.
+- Claims are backed by citations and original filing text.
 
-## Stack
+## Tech stack
 
-| Layer              | Choice                                               |
-| ------------------ | ---------------------------------------------------- |
-| Backend            | Python + FastAPI                                     |
-| Frontend           | Vite + React SPA + TypeScript                        |
-| Database           | Supabase Postgres (users, chats, documents, chunks)  |
-| Migrations         | SQLAlchemy models + Alembic                          |
-| Retrieval          | Supabase `pgvector` + Postgres full-text search      |
-| Auth               | Supabase Auth (email only)                           |
-| Hosting            | Railway                                              |
-| LLM + embeddings   | OpenAI                                               |
+### Frontend
+
+- React + Vite + TypeScript
+- React Router for client routing
+- Tailwind CSS with shadcn/ui patterns
+- `@supabase/supabase-js` for browser auth and session management
+- Vercel AI SDK packages for chat primitives and streaming UI behavior
+
+### Backend
+
+- Python 3.12+
+- FastAPI + Uvicorn
+- Pydantic v2 + pydantic-settings
+- PydanticAI for typed LLM orchestration
+- OpenAI SDK for embeddings and generation
+- Supabase Python client for database and auth access
+- SQLAlchemy + Alembic for schema modeling and migrations
+- `pgvector` for vector search and Postgres full-text search for lexical lookup
+- `httpx` for outbound network calls
+- `structlog` for structured logging
+
+### Persistence and infrastructure
+
+- Supabase Auth for identity
+- Supabase Postgres for product state
+- Supabase `pgvector` for embedding-powered retrieval
+- Railway-ready deployment model with separate frontend and backend services
+
+## Architecture
+
+Document Copilot separates the system into three main layers:
+
+1. Browser UI
+   - Handles login, chat UI, and streaming assistant responses.
+   - Uses Supabase anon credentials only.
+   - Sends authenticated requests to the backend.
+
+2. Backend API
+   - Verifies Supabase JWTs.
+   - Runs retrieval, grounding, and LLM orchestration.
+   - Persists chats, citations, documents, chunks, and metadata.
+   - Streams assistant output back to the browser.
+
+3. Data layer
+   - Stores source documents, encoded chunks, embeddings, and chat state.
+   - Runs hybrid retrieval with semantic and lexical search.
+   - Supplies evidence for grounded answers.
+
+### High-level flow
+
+- User signs in through Supabase Auth in the frontend.
+- Frontend sends chat requests with `Authorization: Bearer <token>` to FastAPI.
+- Backend verifies the token, retrieves relevant document chunks, and calls OpenAI.
+- Backend returns a grounded, cited answer and writes chat state to Supabase.
+- Frontend renders the answer incrementally.
 
 ## Repo layout
 
-```text
-document-copilot/
-├── AGENTS.md           # agent instructions (read first)
-├── README.md           # this file
-├── data/               # local corpus + download script (payloads gitignored)
-├── docs/
-│   └── client-brief.md # the client one-pager
-├── backend/            # FastAPI service
-└── frontend/           # React SPA (Vite)
-```
+- `backend/` — FastAPI service, agent orchestration, retrieval, grounding, and persistence
+- `frontend/` — React SPA and UI components
+- `data/` — ingestion helpers and document download utilities
+- `docs/` — architecture notes, setup guides, and product brief
 
-## Prerequisites
+## Developer workflow
 
-Install these before setting up `backend/` or `frontend/`:
+### Backend
 
-| Tool | Version | Used for | Install |
-| ---- | ------- | -------- | ------- |
-| [Python](https://www.python.org/downloads/) | 3.12+ | Backend runtime | OS package manager or python.org |
-| [uv](https://docs.astral.sh/uv/getting-started/installation/) | latest | Backend deps + `data/download.py` | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
-| [Node.js](https://nodejs.org/) | 20+ (LTS) | Frontend toolchain | nodejs.org or `nvm install --lts` |
-| [pnpm](https://pnpm.io/installation) | latest | Frontend package manager | `corepack enable && corepack prepare pnpm@latest --activate` |
+1. Copy environment variables and fill secrets:
+   ```bash
+   cd backend
+   cp .env.example .env
+   ```
+2. Install or sync dependencies:
+   ```bash
+   uv sync
+   ```
+3. Run the API locally:
+   ```bash
+   uv run uvicorn app.main:app --reload
+   ```
+4. Run migrations:
+   ```bash
+   uv run alembic upgrade head
+   ```
+5. Run tests:
+   ```bash
+   uv run pytest
+   ```
 
-You also need accounts/keys for external services once the app is wired up. Start with [docs/guides/supabase-setup.md](docs/guides/supabase-setup.md) (account + project), then create an [OpenAI API key](https://platform.openai.com/api-keys) when the LLM layer is wired up.
+### Frontend
 
-## Running locally
+1. Install dependencies:
+   ```bash
+   cd frontend
+   pnpm install
+   ```
+2. Start the dev server:
+   ```bash
+   pnpm dev
+   ```
+3. Type check and lint:
+   ```bash
+   pnpm tsc --noEmit
+   pnpm lint
+   ```
 
-Start with [docs/guides/supabase-setup.md](docs/guides/supabase-setup.md), then create env files for both services.
+### Data ingestion
 
-Backend env:
+- Use `data/download.py` from the repo root to fetch sample SEC data.
+- Ingestion is designed to chunk filings, build embeddings, and store them in Supabase.
 
-```bash
-cd backend
-cp .env.example .env
-```
+## Core concepts
 
-Fill these values in `backend/.env`:
+### Grounded answers
 
-- `SUPABASE_URL`
-- `SUPABASE_ANON_KEY`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `DATABASE_URL` using the direct Supabase Postgres connection, not the transaction pooler
-- `OPENAI_API_KEY`
-- `ALLOWED_ORIGINS=http://localhost:5173`
+The product guarantees trust by requiring the backend to:
 
-Frontend env:
+- retrieve supporting document passages,
+- call the LLM with only grounded context,
+- validate citation mappings,
+- refuse to answer when evidence is insufficient.
 
-```bash
-cd frontend
-cp .env.example .env
-```
+### Hybrid retrieval
 
-Fill these values in `frontend/.env`:
+Retrieval combines:
 
-- `VITE_API_BASE_URL=http://localhost:8000`
-- `VITE_SUPABASE_URL`
-- `VITE_SUPABASE_ANON_KEY`
+- semantic ranking over chunk embeddings,
+- lexical ranking via Postgres full-text search,
+- reciprocal rank fusion to merge results.
 
-Install dependencies and migrate the database:
+### PydanticAI orchestration
 
-```bash
-cd backend
-uv sync
-uv run alembic upgrade head
+The backend uses a typed agent boundary to define:
 
-cd ../frontend
-pnpm install
-```
+- the assistant contract,
+- allowed tools and dependencies,
+- the answer payload shape,
+- citation and source-passage output.
 
-Run the backend:
+## Recommended reading
 
-```bash
-cd backend
-uv run uvicorn app.main:app --reload
-```
+- `docs/architecture.md` — system architecture and flow
+- `docs/guides/backend-setup.md` — backend developer setup
+- `docs/guides/frontend-setup.md` — frontend developer setup
+- `docs/client-brief.md` — product and user problem definition
 
-Run the frontend in another terminal:
+## Deployment notes
 
-```bash
-cd frontend
-pnpm dev
-```
+- The backend should run as a stateless FastAPI service.
+- The frontend is a Vite-built SPA.
+- Supabase holds auth and durable product state.
+- The frontend must never receive the Supabase service-role key.
+- All privileged writes should happen on the backend.
 
-Open the Vite URL, usually `http://localhost:5173`.
+## Testing and validation
 
-Useful checks:
+- Backend tests live under `backend/tests/`
+- Use `uv run pytest` to run the suite.
+- Focus on retrieval, grounding, chat orchestration, and LLM output contracts.
 
-```bash
-cd backend
-uv run pytest -m "not integration"
-uv run ruff check .
-uv run python scripts/smoke_retrieval.py
+## Contributing
 
-cd ../frontend
-pnpm lint
-pnpm build
-```
+- Follow the existing architecture: keep the browser thin and the backend authoritative.
+- Add features by extending the backend agent, retrieval, or grounding layers rather than embedding more logic in the frontend.
+- Keep configuration centralized in `backend/app/config.py` and `frontend/lib/env.ts`.
 
-## Sample SEC data
+---
 
-Use the standalone downloader to fetch a small local 10-K sample from SEC EDGAR. Edit the params at the top of `data/download.py`, especially `USER_AGENT`, then run:
-
-```bash
-uv run data/download.py
-```
-
-By default this downloads the latest 5 10-K filings for AAPL, MSFT, NVDA, AMZN, and GOOGL into year folders under `data/downloads/` and writes a `manifest.json`.
-Downloaded files are gitignored; the `data/` folder itself stays in git for the script and notes.
-
-Convert downloaded HTML filings to Markdown:
-
-```bash
-uv run data/convert_to_markdown.py
-```
-
-Load filing metadata into Supabase:
-
-```bash
-cd backend
-uv sync --extra ingest
-uv run python -m ingest.load_source_documents
-```
-
-Chunk and embed the full sample corpus:
-
-```bash
-cd backend
-uv run python -m ingest.chunk_and_embed --all
-```
-
-Update an existing corpus:
-
-```bash
-# Re-run metadata loading; existing rows are skipped by default.
-cd backend
-uv run python -m ingest.load_source_documents
-
-# Ingest only new filings; existing chunks are skipped by default.
-uv run python -m ingest.chunk_and_embed --all
-```
-
-Force-refresh chunks for one filing after changing chunking logic:
-
-```bash
-cd backend
-uv run python -m ingest.chunk_and_embed --accession 0000000000-00-000000 --force
-```
+Document Copilot is built to help analysts trust every answer. Keep the system grounded, test the retrieval layer, and preserve citation integrity as you contribute.
